@@ -110,9 +110,69 @@ defmodule Anubis.Server.Supervisor do
             build_http_children(server, registry_mod, registry_opts, layer, transport_opts, task_supervisor)
         end
 
-      Supervisor.init(children, strategy: :one_for_all)
+      result = Supervisor.init(children, strategy: :one_for_all)
+
+      # Schedule session restoration from store after supervisor starts
+      unless transport == :stdio do
+        Process.send_after(self(), {:restore_sessions, server}, 100)
+      end
+
+      result
     else
       :ignore
+    end
+  end
+
+  @impl true
+  def handle_info({:restore_sessions, server}, state) do
+    restore_sessions(server)
+    {:noreply, state}
+  end
+
+  def handle_info(_msg, state), do: {:noreply, state}
+
+  defp restore_sessions(server) do
+    case Anubis.get_session_store_adapter() do
+      nil ->
+        Logging.log(:debug, "No session store configured, skipping session restoration", [])
+
+      store ->
+        Logging.log(:debug, "Checking for sessions to restore from store", server: server)
+
+        case store.list_active(server: server) do
+          {:ok, session_ids} ->
+            Logging.log(:info, "Restoring #{length(session_ids)} sessions from store", server: server)
+
+            Enum.each(session_ids, fn session_id ->
+              config = get_session_config(server)
+
+              session_opts = [
+                session_id: session_id,
+                server_module: config.server_module,
+                name: Registry.session_name(server, session_id),
+                transport: config.transport,
+                session_idle_timeout: config.session_idle_timeout || to_timeout(minute: 30),
+                timeout: config.timeout,
+                task_supervisor: config.task_supervisor
+              ]
+
+              case start_session(server, session_opts) do
+                {:ok, _pid} ->
+                  Logging.log(:debug, "Restored session #{session_id}", [])
+
+                {:error, reason} ->
+                  Logging.log(:warning, "Failed to restore session #{session_id}",
+                    reason: inspect(reason)
+                  )
+              end
+            end)
+
+          {:error, reason} ->
+            Logging.log(:warning, "Failed to list active sessions from store",
+              server: server,
+              reason: reason
+            )
+        end
     end
   end
 

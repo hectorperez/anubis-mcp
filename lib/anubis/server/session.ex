@@ -100,16 +100,18 @@ defmodule Anubis.Server.Session do
     capabilities = module.server_capabilities()
     protocol_versions = module.supported_protocol_versions()
 
+    restored = maybe_restore_session(opts.session_id, module)
+
     state = %{
       session_id: opts.session_id,
       server_module: module,
-      protocol_version: nil,
-      protocol_module: nil,
-      initialized: false,
-      client_info: nil,
-      client_capabilities: nil,
-      log_level: nil,
-      frame: Frame.new(),
+      protocol_version: restored[:protocol_version],
+      protocol_module: restored[:protocol_module],
+      initialized: restored[:initialized] || false,
+      client_info: restored[:client_info],
+      client_capabilities: restored[:client_capabilities],
+      log_level: restored[:log_level],
+      frame: restored[:frame] || Frame.new(),
       server_info: server_info,
       capabilities: capabilities,
       supported_versions: protocol_versions,
@@ -117,7 +119,7 @@ defmodule Anubis.Server.Session do
       registry: opts.registry,
       session_idle_timeout: opts.session_idle_timeout,
       expiry_timer: nil,
-      pending_requests: %{},
+      pending_requests: restored[:pending_requests] || %{},
       server_requests: %{},
       timeout: opts.timeout,
       task_supervisor: opts.task_supervisor
@@ -952,6 +954,30 @@ defmodule Anubis.Server.Session do
     String.to_existing_atom(mod)
   rescue
     ArgumentError -> nil
+  end
+
+  # Session restore
+
+  defp maybe_restore_session(session_id, _server_module) do
+    if store = Anubis.get_session_store_adapter() do
+      Logging.log(:debug, "Attempting to restore session from store", session_id: session_id)
+
+      case store.load(session_id, []) do
+        {:ok, state_map} ->
+          Logging.log(:info, "Restored session from store", session_id: session_id)
+          from_serializable(state_map)
+
+        {:error, reason} ->
+          Logging.log(:debug, "Could not restore session from store",
+            session_id: session_id,
+            reason: reason
+          )
+
+          %{}
+      end
+    else
+      %{}
+    end
   end
 
   # Session persistence
