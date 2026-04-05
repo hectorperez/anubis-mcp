@@ -110,25 +110,27 @@ defmodule Anubis.Server.Supervisor do
             build_http_children(server, registry_mod, registry_opts, layer, transport_opts, task_supervisor)
         end
 
-      result = Supervisor.init(children, strategy: :one_for_all)
+      # Add session restore task as the last child for HTTP transports
+      children =
+        unless transport == :stdio do
+          children ++ [session_restore_child(server)]
+        else
+          children
+        end
 
-      # Schedule session restoration from store after supervisor starts
-      unless transport == :stdio do
-        Process.send_after(self(), {:restore_sessions, server}, 100)
-      end
-
-      result
+      Supervisor.init(children, strategy: :one_for_all)
     else
       :ignore
     end
   end
 
-  def handle_info({:restore_sessions, server}, state) do
-    restore_sessions(server)
-    {:noreply, state}
+  defp session_restore_child(server) do
+    %{
+      id: :session_restorer,
+      start: {Task, :start_link, [fn -> restore_sessions(server) end]},
+      restart: :temporary
+    }
   end
-
-  def handle_info(_msg, state), do: {:noreply, state}
 
   defp restore_sessions(server) do
     case Anubis.get_session_store_adapter() do
