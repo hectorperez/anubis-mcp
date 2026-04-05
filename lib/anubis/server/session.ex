@@ -646,9 +646,18 @@ defmodule Anubis.Server.Session do
     %{state.frame | context: context}
   end
 
-  defp merge_transport_assigns(state, %{assigns: assigns}) when is_map(assigns) do
+  defp merge_transport_assigns(state, %{} = transport_context) do
+    assigns = Map.get(transport_context, :assigns, %{})
+    query_params = Map.get(transport_context, :query_params)
+
     original_context = state.frame.context
     frame = Frame.assign(state.frame, assigns)
+
+    frame =
+      if query_params,
+        do: Frame.assign(frame, :query_params, query_params),
+        else: frame
+
     frame = %{frame | context: original_context}
     %{state | frame: frame}
   end

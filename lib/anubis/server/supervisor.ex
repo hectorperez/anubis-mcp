@@ -123,7 +123,6 @@ defmodule Anubis.Server.Supervisor do
     end
   end
 
-  @impl true
   def handle_info({:restore_sessions, server}, state) do
     restore_sessions(server)
     {:noreply, state}
